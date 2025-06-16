@@ -425,31 +425,9 @@ body {
   background: #fef2f2;
   border: 1px solid #fecaca;
   color: #dc2626;
-  padding: 2rem;
+  padding: 1.5rem;
   border-radius: 12px;
-  text-align: left;
-  max-width: 600px;
-  margin: 2rem auto;
-}
-
-.error-container h3 {
-  margin: 0 0 1rem 0;
-  color: #b91c1c;
-}
-
-.error-container p {
-  margin: 0.5rem 0;
-}
-
-.error-hint {
-  margin-top: 1rem;
-  font-size: 0.9rem;
-  color: #7f1d1d;
-}
-
-.error-hint ul {
-  margin: 0.5rem 0 0 1.5rem;
-  padding: 0;
+  text-align: center;
 }
 
 /* Footer */

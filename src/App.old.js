@@ -2,9 +2,6 @@ import React, { useState, useCallback, useMemo } from 'react';
 import { ApolloClient, InMemoryCache, ApolloProvider, gql, useQuery, useLazyQuery } from '@apollo/client';
 import './App.css';
 
-// Debug: Log the GraphQL endpoint
-console.log('GraphQL Endpoint:', process.env.REACT_APP_GRAPHQL_URL || '/graphql');
-
 // Apollo Client setup
 const client = new ApolloClient({
   uri: process.env.REACT_APP_GRAPHQL_URL || '/graphql',
@@ -121,37 +118,15 @@ function CitySearch({ onCitySelect }) {
     onCitySelect(city);
   };
 
-  const handleKeyPress = (e) => {
-    if (e.key === 'Enter' && suggestions.length > 0) {
-      handleCitySelect(suggestions[0]);
-    }
-  };
-
-  const handleSearchClick = () => {
-    if (suggestions.length > 0) {
-      handleCitySelect(suggestions[0]);
-    }
-  };
-
   return (
     <div className="city-search">
-      <div className="search-container">
-        <input
-          type="text"
-          value={query}
-          onChange={(e) => handleSearch(e.target.value)}
-          onKeyPress={handleKeyPress}
-          placeholder="Search for a city..."
-          className="search-input"
-        />
-        <button 
-          onClick={handleSearchClick}
-          disabled={loading || suggestions.length === 0}
-          className="search-button"
-        >
-          Search
-        </button>
-      </div>
+      <input
+        type="text"
+        value={query}
+        onChange={(e) => handleSearch(e.target.value)}
+        placeholder="Search for a city..."
+        className="search-input"
+      />
       {loading && <div className="loading-indicator">Searching...</div>}
       {showSuggestions && suggestions.length > 0 && (
         <ul className="suggestions">
@@ -265,20 +240,9 @@ function Results({ city }) {
   }
 
   if (error) {
-    console.error('GraphQL Error:', error);
     return (
       <div className="error-container">
-        <h3>Unable to load weather data</h3>
-        <p>{error.message}</p>
-        <p className="error-hint">
-          This might happen if:
-          <ul>
-            <li>The location is not covered by the weather service</li>
-            <li>The coordinates are invalid</li>
-            <li>There's a temporary service issue</li>
-          </ul>
-          Try searching for a different city or refresh the page.
-        </p>
+        <p>Error loading weather data: {error.message}</p>
       </div>
     );
   }

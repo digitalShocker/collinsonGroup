@@ -64,30 +64,49 @@ class WeatherService {
       return cached.data;
     }
 
-    const params = new URLSearchParams({
-      latitude,
-      longitude,
-      daily: 'temperature_2m_max,temperature_2m_min,precipitation_sum,windspeed_10m_max,cloudcover_mean,snowfall_sum,weathercode',
-      timezone: 'auto',
-      forecast_days: 7
-    });
+    try {
+      const params = new URLSearchParams({
+        latitude,
+        longitude,
+        daily: 'temperature_2m_max,temperature_2m_min,precipitation_sum,windspeed_10m_max,cloudcover_mean,snowfall_sum,weathercode',
+        timezone: 'auto',
+        forecast_days: 7
+      });
 
-    // Check if we're near a coast for wave data
-    const isCoastal = await this.checkIfCoastal(latitude, longitude);
-    if (isCoastal) {
-      params.append('daily', 'wave_height_max');
+      // Check if we're near a coast for wave data
+      const isCoastal = await this.checkIfCoastal(latitude, longitude);
+      if (isCoastal) {
+        params.append('daily', 'wave_height_max');
+      }
+
+      const url = `https://api.open-meteo.com/v1/forecast?${params}`;
+      console.log(`Fetching weather data from: ${url}`);
+      
+      const response = await fetch(url);
+      
+      if (!response.ok) {
+        throw new Error(`Weather API error: ${response.status} ${response.statusText}`);
+      }
+      
+      const data = await response.json();
+      
+      // Validate the response structure
+      if (!data.daily || !data.daily.time || !Array.isArray(data.daily.time)) {
+        console.error('Invalid weather data structure:', JSON.stringify(data));
+        throw new Error('Invalid weather data received from API');
+      }
+
+      const result = {
+        daily: data.daily,
+        isCoastal
+      };
+
+      cache.set(cacheKey, { data: result, timestamp: Date.now() });
+      return result;
+    } catch (error) {
+      console.error(`Error fetching weather for ${latitude},${longitude}:`, error);
+      throw new Error(`Failed to fetch weather data: ${error.message}`);
     }
-
-    const response = await fetch(`https://api.open-meteo.com/v1/forecast?${params}`);
-    const data = await response.json();
-
-    const result = {
-      daily: data.daily,
-      isCoastal
-    };
-
-    cache.set(cacheKey, { data: result, timestamp: Date.now() });
-    return result;
   }
 
   async searchCities(query) {
@@ -136,6 +155,13 @@ class WeatherService {
 class ActivityRanker {
   rankActivities(weatherData) {
     const { daily, isCoastal } = weatherData;
+    
+    // Add validation
+    if (!daily || !daily.time || !Array.isArray(daily.time) || daily.time.length === 0) {
+      console.error('Invalid weather data in rankActivities:', weatherData);
+      throw new Error('Invalid weather data structure');
+    }
+    
     const activities = [
       this.rankSkiing(daily),
       this.rankSurfing(daily, isCoastal),
@@ -361,59 +387,76 @@ const activityRanker = new ActivityRanker();
 const resolvers = {
   Query: {
     async getActivityRankings(_, { city, latitude, longitude }) {
-      let coords = { latitude, longitude };
-      let cityData = null;
+      try {
+        let coords = { latitude, longitude };
+        let cityData = null;
 
-      // If coordinates not provided, search for city
-      if (!latitude || !longitude) {
-        const cities = await weatherService.searchCities(city);
-        if (!cities || cities.length === 0) {
-          throw new Error(`City "${city}" not found`);
+        // If coordinates not provided, search for city
+        if (!latitude || !longitude) {
+          const cities = await weatherService.searchCities(city);
+          if (!cities || cities.length === 0) {
+            throw new Error(`City "${city}" not found`);
+          }
+          cityData = cities[0];
+          coords = { latitude: cityData.latitude, longitude: cityData.longitude };
+        } else {
+          // Create city data from provided info
+          cityData = {
+            name: city,
+            country: 'Unknown',
+            latitude: coords.latitude,
+            longitude: coords.longitude
+          };
         }
-        cityData = cities[0];
-        coords = { latitude: cityData.latitude, longitude: cityData.longitude };
-      } else {
-        // Create city data from provided info
-        cityData = {
-          name: city,
-          country: 'Unknown',
-          latitude: coords.latitude,
-          longitude: coords.longitude
+
+        // Validate coordinates
+        if (Math.abs(coords.latitude) > 90 || Math.abs(coords.longitude) > 180) {
+          throw new Error(`Invalid coordinates: ${coords.latitude}, ${coords.longitude}`);
+        }
+
+        console.log(`Fetching weather for ${cityData.name} at ${coords.latitude}, ${coords.longitude}`);
+        
+        const weatherData = await weatherService.getWeatherForecast(coords.latitude, coords.longitude);
+        const rankings = activityRanker.rankActivities(weatherData);
+
+        // Format forecast data with validation
+        const forecast = weatherData.daily.time.map((date, i) => ({
+          date,
+          temperatureMax: weatherData.daily.temperature_2m_max?.[i] ?? 0,
+          temperatureMin: weatherData.daily.temperature_2m_min?.[i] ?? 0,
+          precipitation: weatherData.daily.precipitation_sum?.[i] ?? 0,
+          windSpeed: weatherData.daily.windspeed_10m_max?.[i] ?? 0,
+          cloudCover: weatherData.daily.cloudcover_mean?.[i] ?? 0,
+          snowfall: weatherData.daily.snowfall_sum?.[i] ?? 0,
+          waveHeight: weatherData.daily.wave_height_max?.[i] ?? null,
+          weatherCode: weatherData.daily.weathercode?.[i] ?? 0
+        }));
+
+        return {
+          city: cityData,
+          rankings,
+          forecast
         };
+      } catch (error) {
+        console.error('Error in getActivityRankings:', error);
+        throw new Error(`Failed to get activity rankings: ${error.message}`);
       }
-
-      const weatherData = await weatherService.getWeatherForecast(coords.latitude, coords.longitude);
-      const rankings = activityRanker.rankActivities(weatherData);
-
-      // Format forecast data
-      const forecast = weatherData.daily.time.map((date, i) => ({
-        date,
-        temperatureMax: weatherData.daily.temperature_2m_max[i],
-        temperatureMin: weatherData.daily.temperature_2m_min[i],
-        precipitation: weatherData.daily.precipitation_sum[i],
-        windSpeed: weatherData.daily.windspeed_10m_max[i],
-        cloudCover: weatherData.daily.cloudcover_mean[i],
-        snowfall: weatherData.daily.snowfall_sum[i] || 0,
-        waveHeight: weatherData.daily.wave_height_max?.[i] || null,
-        weatherCode: weatherData.daily.weathercode[i]
-      }));
-
-      return {
-        city: cityData,
-        rankings,
-        forecast
-      };
     },
 
     async searchCities(_, { query }) {
-      const results = await weatherService.searchCities(query);
-      return results.map(city => ({
-        name: city.name,
-        country: city.country,
-        latitude: city.latitude,
-        longitude: city.longitude,
-        admin1: city.admin1 || null
-      }));
+      try {
+        const results = await weatherService.searchCities(query);
+        return results.map(city => ({
+          name: city.name,
+          country: city.country,
+          latitude: city.latitude,
+          longitude: city.longitude,
+          admin1: city.admin1 || null
+        }));
+      } catch (error) {
+        console.error('Error in searchCities:', error);
+        throw new Error(`Failed to search cities: ${error.message}`);
+      }
     }
   }
 };
@@ -422,31 +465,85 @@ const resolvers = {
 async function startServer() {
   const app = express();
   
-  app.use(cors({
-    origin: process.env.FRONTEND_URL || '*',
+  // CORS configuration
+  const corsOptions = {
+    origin: function (origin, callback) {
+      // Allow requests with no origin (like mobile apps or curl requests)
+      if (!origin) return callback(null, true);
+      
+      // Allow any CloudFront distribution or configured frontend URL
+      const allowedPatterns = [
+        /^https:\/\/[a-z0-9]+\.cloudfront\.net$/,
+        /^http:\/\/localhost:\d+$/,
+      ];
+      
+      // Also allow the specific frontend URL if configured
+      if (process.env.FRONTEND_URL) {
+        callback(null, true); // Trust the configured URL
+      } else if (allowedPatterns.some(pattern => pattern.test(origin))) {
+        callback(null, true);
+      } else {
+        callback(null, true); // For development, allow all origins
+        // In production, you might want to be more restrictive:
+        // callback(new Error('Not allowed by CORS'));
+      }
+    },
     credentials: true
-  }));
+  };
+
+  app.use(cors(corsOptions));
 
   const server = new ApolloServer({
     typeDefs,
     resolvers,
     cache: 'bounded',
-    persistedQueries: false
+    persistedQueries: false,
+    introspection: true, // Enable introspection in production for debugging
+    formatError: (err) => {
+      console.error('GraphQL Error:', err);
+      return err;
+    },
   });
 
   await server.start();
-  server.applyMiddleware({ app, path: '/graphql' });
+  
+  // Apply middleware with explicit path
+  server.applyMiddleware({ 
+    app, 
+    path: '/graphql',
+    cors: false // We're handling CORS at the Express level
+  });
 
   // Health check endpoint
   app.get('/health', (req, res) => {
     res.json({ status: 'healthy', timestamp: new Date().toISOString() });
   });
 
+  // Root endpoint for debugging
+  app.get('/', (req, res) => {
+    res.json({ 
+      message: 'Weather Activity API',
+      graphql: '/graphql',
+      health: '/health'
+    });
+  });
+
+  // Catch-all for debugging
+  app.use((req, res) => {
+    console.log(`Unhandled request: ${req.method} ${req.path}`);
+    res.status(404).json({ 
+      error: 'Not Found', 
+      path: req.path,
+      method: req.method 
+    });
+  });
+
   const PORT = process.env.PORT || 4000;
   
   app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
-    console.log(`GraphQL endpoint: http://localhost:${PORT}/graphql`);
+    console.log(`GraphQL endpoint: http://localhost:${PORT}${server.graphqlPath}`);
+    console.log(`Health check: http://localhost:${PORT}/health`);
   });
 }
 

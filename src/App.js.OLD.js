@@ -265,20 +265,9 @@ function Results({ city }) {
   }
 
   if (error) {
-    console.error('GraphQL Error:', error);
     return (
       <div className="error-container">
-        <h3>Unable to load weather data</h3>
-        <p>{error.message}</p>
-        <p className="error-hint">
-          This might happen if:
-          <ul>
-            <li>The location is not covered by the weather service</li>
-            <li>The coordinates are invalid</li>
-            <li>There's a temporary service issue</li>
-          </ul>
-          Try searching for a different city or refresh the page.
-        </p>
+        <p>Error loading weather data: {error.message}</p>
       </div>
     );
   }

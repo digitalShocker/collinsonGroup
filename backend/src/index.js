@@ -64,30 +64,77 @@ class WeatherService {
       return cached.data;
     }
 
-    const params = new URLSearchParams({
-      latitude,
-      longitude,
-      daily: 'temperature_2m_max,temperature_2m_min,precipitation_sum,windspeed_10m_max,cloudcover_mean,snowfall_sum,weathercode',
-      timezone: 'auto',
-      forecast_days: 7
-    });
+    try {
+      // First, make the basic weather API call
+      const params = new URLSearchParams({
+        latitude,
+        longitude,
+        daily: 'temperature_2m_max,temperature_2m_min,precipitation_sum,windspeed_10m_max,cloudcover_mean,snowfall_sum,weathercode',
+        timezone: 'auto',
+        forecast_days: 7
+      });
 
-    // Check if we're near a coast for wave data
-    const isCoastal = await this.checkIfCoastal(latitude, longitude);
-    if (isCoastal) {
-      params.append('daily', 'wave_height_max');
+      const url = `https://api.open-meteo.com/v1/forecast?${params}`;
+      console.log(`Fetching weather data from: ${url}`);
+      
+      const response = await fetch(url);
+      
+      if (!response.ok) {
+        throw new Error(`Weather API error: ${response.status} ${response.statusText}`);
+      }
+      
+      const data = await response.json();
+      
+      // Validate the response structure
+      if (!data.daily || !data.daily.time || !Array.isArray(data.daily.time)) {
+        console.error('Invalid weather data structure:', JSON.stringify(data));
+        throw new Error('Invalid weather data received from API');
+      }
+
+      // Check if we're near a coast for wave data
+      const isCoastal = await this.checkIfCoastal(latitude, longitude);
+      
+      // If coastal, try to get marine data (but handle if not available)
+      if (isCoastal) {
+        try {
+          const marineParams = new URLSearchParams({
+            latitude,
+            longitude,
+            daily: 'wave_height_max',
+            timezone: 'auto',
+            forecast_days: 7
+          });
+          
+          const marineUrl = `https://marine-api.open-meteo.com/v1/marine?${marineParams}`;
+          console.log(`Fetching marine data from: ${marineUrl}`);
+          
+          const marineResponse = await fetch(marineUrl);
+          
+          if (marineResponse.ok) {
+            const marineData = await marineResponse.json();
+            if (marineData.daily && marineData.daily.wave_height_max) {
+              data.daily.wave_height_max = marineData.daily.wave_height_max;
+            }
+          } else {
+            console.log(`Marine data not available for ${latitude},${longitude}`);
+          }
+        } catch (marineError) {
+          console.log(`Failed to fetch marine data: ${marineError.message}`);
+          // Continue without wave data
+        }
+      }
+
+      const result = {
+        daily: data.daily,
+        isCoastal
+      };
+
+      cache.set(cacheKey, { data: result, timestamp: Date.now() });
+      return result;
+    } catch (error) {
+      console.error(`Error fetching weather for ${latitude},${longitude}:`, error);
+      throw new Error(`Failed to fetch weather data: ${error.message}`);
     }
-
-    const response = await fetch(`https://api.open-meteo.com/v1/forecast?${params}`);
-    const data = await response.json();
-
-    const result = {
-      daily: data.daily,
-      isCoastal
-    };
-
-    cache.set(cacheKey, { data: result, timestamp: Date.now() });
-    return result;
   }
 
   async searchCities(query) {
@@ -117,18 +164,49 @@ class WeatherService {
     // Simplified coastal check - in production would use a proper geographic API
     // This is a rough approximation based on known coastal areas
     const coastalZones = [
+      // North America
       { name: 'US West Coast', latRange: [32, 49], lonRange: [-125, -117] },
       { name: 'US East Coast', latRange: [25, 45], lonRange: [-81, -66] },
+      { name: 'Gulf of Mexico', latRange: [25, 30], lonRange: [-98, -81] },
       { name: 'Hawaii', latRange: [18, 23], lonRange: [-161, -154] },
+      { name: 'California', latRange: [32, 42], lonRange: [-125, -117] },
+      
+      // Australia
       { name: 'Australia East', latRange: [-39, -10], lonRange: [141, 154] },
+      { name: 'Australia West', latRange: [-35, -15], lonRange: [112, 129] },
+      { name: 'Australia South', latRange: [-39, -31], lonRange: [129, 141] },
+      
+      // Europe
       { name: 'Europe Atlantic', latRange: [36, 60], lonRange: [-10, 0] },
-      { name: 'Mediterranean', latRange: [30, 45], lonRange: [-6, 36] }
+      { name: 'Mediterranean', latRange: [30, 45], lonRange: [-6, 36] },
+      { name: 'North Sea', latRange: [50, 60], lonRange: [-2, 10] },
+      { name: 'Baltic Sea', latRange: [53, 66], lonRange: [10, 30] },
+      
+      // Asia
+      { name: 'Japan', latRange: [30, 45], lonRange: [129, 146] },
+      { name: 'Southeast Asia', latRange: [-10, 20], lonRange: [95, 140] },
+      { name: 'India West', latRange: [8, 24], lonRange: [68, 77] },
+      { name: 'India East', latRange: [8, 22], lonRange: [80, 92] },
+      
+      // South America
+      { name: 'Brazil', latRange: [-34, 5], lonRange: [-74, -35] },
+      { name: 'Chile', latRange: [-56, -18], lonRange: [-76, -68] },
+      
+      // Africa
+      { name: 'South Africa', latRange: [-35, -22], lonRange: [16, 33] },
+      { name: 'West Africa', latRange: [-5, 35], lonRange: [-18, -5] }
     ];
 
-    return coastalZones.some(zone => 
+    const isInCoastalZone = coastalZones.some(zone => 
       latitude >= zone.latRange[0] && latitude <= zone.latRange[1] &&
       longitude >= zone.lonRange[0] && longitude <= zone.lonRange[1]
     );
+    
+    if (isInCoastalZone) {
+      console.log(`Location ${latitude}, ${longitude} detected as coastal`);
+    }
+    
+    return isInCoastalZone;
   }
 }
 
@@ -136,6 +214,13 @@ class WeatherService {
 class ActivityRanker {
   rankActivities(weatherData) {
     const { daily, isCoastal } = weatherData;
+    
+    // Add validation
+    if (!daily || !daily.time || !Array.isArray(daily.time) || daily.time.length === 0) {
+      console.error('Invalid weather data in rankActivities:', weatherData);
+      throw new Error('Invalid weather data structure');
+    }
+    
     const activities = [
       this.rankSkiing(daily),
       this.rankSurfing(daily, isCoastal),
@@ -361,59 +446,76 @@ const activityRanker = new ActivityRanker();
 const resolvers = {
   Query: {
     async getActivityRankings(_, { city, latitude, longitude }) {
-      let coords = { latitude, longitude };
-      let cityData = null;
+      try {
+        let coords = { latitude, longitude };
+        let cityData = null;
 
-      // If coordinates not provided, search for city
-      if (!latitude || !longitude) {
-        const cities = await weatherService.searchCities(city);
-        if (!cities || cities.length === 0) {
-          throw new Error(`City "${city}" not found`);
+        // If coordinates not provided, search for city
+        if (!latitude || !longitude) {
+          const cities = await weatherService.searchCities(city);
+          if (!cities || cities.length === 0) {
+            throw new Error(`City "${city}" not found`);
+          }
+          cityData = cities[0];
+          coords = { latitude: cityData.latitude, longitude: cityData.longitude };
+        } else {
+          // Create city data from provided info
+          cityData = {
+            name: city,
+            country: 'Unknown',
+            latitude: coords.latitude,
+            longitude: coords.longitude
+          };
         }
-        cityData = cities[0];
-        coords = { latitude: cityData.latitude, longitude: cityData.longitude };
-      } else {
-        // Create city data from provided info
-        cityData = {
-          name: city,
-          country: 'Unknown',
-          latitude: coords.latitude,
-          longitude: coords.longitude
+
+        // Validate coordinates
+        if (Math.abs(coords.latitude) > 90 || Math.abs(coords.longitude) > 180) {
+          throw new Error(`Invalid coordinates: ${coords.latitude}, ${coords.longitude}`);
+        }
+
+        console.log(`Fetching weather for ${cityData.name} at ${coords.latitude}, ${coords.longitude}`);
+        
+        const weatherData = await weatherService.getWeatherForecast(coords.latitude, coords.longitude);
+        const rankings = activityRanker.rankActivities(weatherData);
+
+        // Format forecast data with validation
+        const forecast = weatherData.daily.time.map((date, i) => ({
+          date,
+          temperatureMax: weatherData.daily.temperature_2m_max?.[i] ?? 0,
+          temperatureMin: weatherData.daily.temperature_2m_min?.[i] ?? 0,
+          precipitation: weatherData.daily.precipitation_sum?.[i] ?? 0,
+          windSpeed: weatherData.daily.windspeed_10m_max?.[i] ?? 0,
+          cloudCover: weatherData.daily.cloudcover_mean?.[i] ?? 0,
+          snowfall: weatherData.daily.snowfall_sum?.[i] ?? 0,
+          waveHeight: weatherData.daily.wave_height_max?.[i] ?? null,
+          weatherCode: weatherData.daily.weathercode?.[i] ?? 0
+        }));
+
+        return {
+          city: cityData,
+          rankings,
+          forecast
         };
+      } catch (error) {
+        console.error('Error in getActivityRankings:', error);
+        throw new Error(`Failed to get activity rankings: ${error.message}`);
       }
-
-      const weatherData = await weatherService.getWeatherForecast(coords.latitude, coords.longitude);
-      const rankings = activityRanker.rankActivities(weatherData);
-
-      // Format forecast data
-      const forecast = weatherData.daily.time.map((date, i) => ({
-        date,
-        temperatureMax: weatherData.daily.temperature_2m_max[i],
-        temperatureMin: weatherData.daily.temperature_2m_min[i],
-        precipitation: weatherData.daily.precipitation_sum[i],
-        windSpeed: weatherData.daily.windspeed_10m_max[i],
-        cloudCover: weatherData.daily.cloudcover_mean[i],
-        snowfall: weatherData.daily.snowfall_sum[i] || 0,
-        waveHeight: weatherData.daily.wave_height_max?.[i] || null,
-        weatherCode: weatherData.daily.weathercode[i]
-      }));
-
-      return {
-        city: cityData,
-        rankings,
-        forecast
-      };
     },
 
     async searchCities(_, { query }) {
-      const results = await weatherService.searchCities(query);
-      return results.map(city => ({
-        name: city.name,
-        country: city.country,
-        latitude: city.latitude,
-        longitude: city.longitude,
-        admin1: city.admin1 || null
-      }));
+      try {
+        const results = await weatherService.searchCities(query);
+        return results.map(city => ({
+          name: city.name,
+          country: city.country,
+          latitude: city.latitude,
+          longitude: city.longitude,
+          admin1: city.admin1 || null
+        }));
+      } catch (error) {
+        console.error('Error in searchCities:', error);
+        throw new Error(`Failed to search cities: ${error.message}`);
+      }
     }
   }
 };
