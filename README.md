@@ -154,8 +154,7 @@ npm start
 
 1. **Phase 2**: Add more activities (hiking, swimming, photography)
 2. **Phase 3**: User accounts with saved searches
-3. **Phase 4**: Machine learning for personalized recommendations
-4. **Phase 5**: Mobile applications
+3. **Phase 4**: Mobile applications
 
 ## Lessons Learned During Development
 
