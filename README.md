@@ -126,7 +126,7 @@ npm start
 7. **Caching Strategy**: In-memory only; would add Redis for distributed caching
 
 ### Why These Trade-offs Make Sense:
-- **Speed to Market**: Get feedback quickly on core functionality
+- **Speed to Market**: Get feedback quickly on core functionality (Since No One Responded to my email with questions or subsequent emails)
 - **Cost Control**: Minimize infrastructure for prototype
 - **Focus on Core Value**: Weather ranking is the key differentiator
 - **Easy Evolution**: Architecture supports adding features without major refactoring
