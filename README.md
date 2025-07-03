@@ -75,20 +75,6 @@ cd ../
 ./deploy.sh
 ```
 
-### Local Development
-
-```bash
-# Backend
-cd backend
-npm install
-npm run dev
-
-# Frontend (in another terminal)
-cd frontend
-npm install
-npm start
-```
-
 ## Activity Ranking Methodology
 
 ### Skiing
